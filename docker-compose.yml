@@ -1,0 +1,132 @@
+version: '3.8'
+
+services:
+  # Database for IAM & Notification microservices
+  mongodb:
+    image: mongo:7.0
+    container_name: cache-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: community_platform
+    networks:
+      - cache-net
+
+  # Distributed Cache Node 1
+  cache-node-1:
+    build:
+      context: ./cache-service
+      dockerfile: Dockerfile
+    container_name: cache-node-1
+    ports:
+      - "8081:8081"
+    environment:
+      SERVER_PORT: 8081
+      CACHE_NODE_ID: node-1
+      CACHE_NODE_HOST: cache-node-1
+      CACHE_NODE_PORT: 8081
+      CACHE_CLUSTER_PEERS: "http://cache-node-2:8082,http://cache-node-3:8083"
+    networks:
+      - cache-net
+
+  # Distributed Cache Node 2
+  cache-node-2:
+    build:
+      context: ./cache-service
+      dockerfile: Dockerfile
+    container_name: cache-node-2
+    ports:
+      - "8082:8082"
+    environment:
+      SERVER_PORT: 8082
+      CACHE_NODE_ID: node-2
+      CACHE_NODE_HOST: cache-node-2
+      CACHE_NODE_PORT: 8082
+      CACHE_CLUSTER_PEERS: "http://cache-node-1:8081,http://cache-node-3:8083"
+    networks:
+      - cache-net
+    depends_on:
+      - cache-node-1
+
+  # Distributed Cache Node 3
+  cache-node-3:
+    build:
+      context: ./cache-service
+      dockerfile: Dockerfile
+    container_name: cache-node-3
+    ports:
+      - "8083:8083"
+    environment:
+      SERVER_PORT: 8083
+      CACHE_NODE_ID: node-3
+      CACHE_NODE_HOST: cache-node-3
+      CACHE_NODE_PORT: 8083
+      CACHE_CLUSTER_PEERS: "http://cache-node-1:8081,http://cache-node-2:8082"
+    networks:
+      - cache-net
+    depends_on:
+      - cache-node-1
+
+  # API Gateway & Edge Router
+  gateway-service:
+    build:
+      context: ./gateway-service
+      dockerfile: Dockerfile
+    container_name: gateway-service
+    ports:
+      - "8080:8080"
+    environment:
+      CLUSTER_NODES: "http://cache-node-1:8081,http://cache-node-2:8082,http://cache-node-3:8083"
+    networks:
+      - cache-net
+    depends_on:
+      - cache-node-1
+      - cache-node-2
+      - cache-node-3
+
+  # Notification Microservice
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    container_name: notification-service
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_DATA_MONGODB_URI: "mongodb://mongodb:27017/community_notification"
+    networks:
+      - cache-net
+    depends_on:
+      - mongodb
+
+  # IAM Microservice
+  iam-service:
+    build:
+      context: "./iam-service - updated"
+      dockerfile: Dockerfile
+    container_name: iam-service
+    ports:
+      - "8085:8085"
+    environment:
+      SPRING_DATA_MONGODB_URI: "mongodb://mongodb:27017/community_iam"
+    networks:
+      - cache-net
+    depends_on:
+      - mongodb
+
+  # Cluster Monitoring Frontend Console
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cache-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - cache-net
+    depends_on:
+      - gateway-service
+
+networks:
+  cache-net:
+    driver: bridge
